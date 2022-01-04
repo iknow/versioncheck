@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec deno run --no-check --allow-net --allow-read --allow-write=cache.db,cache.db-journal src/index.ts "$@"
