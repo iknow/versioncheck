@@ -127,7 +127,7 @@ async function checkVersions(options: GlobalOptions) {
         const upstreamVersion =
           (upstream.latest === undefined || upstream.version.main === upstream.latest.main)
             ? versionToString(upstream.version, green)
-            : `${versionToString(upstream.version, yellow)} (latest: ${versionToString(upstream.latest, green)})`;
+            : `${versionToString(upstream.version, yellow)}\n${versionToString(upstream.latest, green)} (latest)`;
 
         return [name, upstreamVersion, status];
       }
