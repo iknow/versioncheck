@@ -171,21 +171,14 @@ await new Command<void>()
   .option<{ update?: boolean }>("-u --update", "Fetch new upstream versions", {
     global: true,
   })
+  // env is handled as defaults as cliffy doesn't support restricted env yet
   .option<{ config: string }>("-c --config [value:string]", "Path to config file", {
-    default: "config.yaml",
+    default: Deno.env.get("VERSIONCHECK_CONFIG") ?? "config.yaml",
     global: true,
-  })
-  .env<{ config: string }>("VERSIONCHECK_CONFIG=<value:string>", "Path to config file", {
-    global: true,
-    prefix: "VERSIONCHECK_",
   })
   .option<{ paths: string }>("-p --paths [value:string]", "Path to paths mapping file", {
-    default: "paths.yaml",
+    default: Deno.env.get("VERSIONCHECK_PATHS") ?? "paths.yaml",
     global: true,
-  })
-  .env<{ paths: string }>("VERSIONCHECK_PATHS=<value:string>", "Path to paths mapping file", {
-    global: true,
-    prefix: "VERSIONCHECK_",
   })
   .command("check")
   .description("Check versions")
@@ -197,4 +190,3 @@ await new Command<void>()
   .action(listVersions)
   .reset()
   .parse(Deno.args);
-
