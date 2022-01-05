@@ -167,9 +167,17 @@ await new Command<void>()
     default: "config.yaml",
     global: true,
   })
+  .env<{ config: string }>("VERSIONCHECK_CONFIG=<value:string>", "Path to config file", {
+    global: true,
+    prefix: "VERSIONCHECK_",
+  })
   .option<{ paths: string }>("-p --paths [value:string]", "Path to paths mapping file", {
     default: "paths.yaml",
     global: true,
+  })
+  .env<{ paths: string }>("VERSIONCHECK_PATHS=<value:string>", "Path to paths mapping file", {
+    global: true,
+    prefix: "VERSIONCHECK_",
   })
   .command("check")
   .description("Check versions")
