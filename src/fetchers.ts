@@ -298,7 +298,10 @@ async function fetchHtml(
   return versions;
 }
 
-async function fetchHelm(spec: HelmFetch, context: Context): Promise<Version[]> {
+async function fetchHelm(
+  spec: HelmFetch,
+  context: Context,
+): Promise<Version[]> {
   const rawText = await fetchUrl(`${spec.repo}/index.yaml`, context);
   const rawYaml = YAML.parse(rawText);
   const helmRepo = HelmResponseSchema.parse(rawYaml);
@@ -311,7 +314,7 @@ async function fetchHelm(spec: HelmFetch, context: Context): Promise<Version[]> 
     throw new Error(`No versions for chart ${spec.chart} of ${spec.repo}`);
   }
 
-  return chartVersions.map(entry => {
+  return chartVersions.map((entry) => {
     if (entry.apiVersion === "v2") {
       return {
         main: entry.version,
@@ -363,7 +366,9 @@ export async function fetchVersion(
 
   const latest = validVersions[0];
   const version = spec.versionSpec
-    ? validVersions.find(({ main }) => semver.satisfies(main, spec.versionSpec!))
+    ? validVersions.find(({ main }) =>
+      semver.satisfies(main, spec.versionSpec!)
+    )
     : latest;
 
   if (version === undefined) {

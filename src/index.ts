@@ -8,7 +8,13 @@ import { Command } from "https://deno.land/x/cliffy@v0.20.1/command/mod.ts";
 import { Row, Table } from "https://deno.land/x/cliffy@v0.20.1/table/mod.ts";
 import * as semver from "https://deno.land/x/semver@v1.4.0/mod.ts";
 import { Config, ConfigSchema, loadYaml, PathsSchema } from "./config.ts";
-import { Context, Fetch, fetchVersion, Version, VersionResult } from "./fetchers.ts";
+import {
+  Context,
+  Fetch,
+  fetchVersion,
+  Version,
+  VersionResult,
+} from "./fetchers.ts";
 import { Cache } from "./cache.ts";
 
 interface CheckResult {
@@ -74,7 +80,7 @@ async function checkVersion(
 }
 
 function versionToString(value: Version, color: (s: string) => string): string {
-  return color(value.main) + (value.app ? ` [${value.app}]` : '');
+  return color(value.main) + (value.app ? ` [${value.app}]` : "");
 }
 
 interface GlobalOptions {
@@ -111,7 +117,9 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
   );
 
   if (options.outdated) {
-    checks = checks.filter(({ outdated }) => Object.entries(outdated).length > 0);
+    checks = checks.filter(({ outdated }) =>
+      Object.entries(outdated).length > 0
+    );
   }
 
   new Table()
@@ -133,9 +141,12 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
           : Table.from(statusEntries).toString();
 
         const upstreamVersion =
-          (upstream.latest === undefined || upstream.version.main === upstream.latest.main)
+          (upstream.latest === undefined ||
+              upstream.version.main === upstream.latest.main)
             ? versionToString(upstream.version, green)
-            : `${versionToString(upstream.version, yellow)}\n${versionToString(upstream.latest, green)} (latest)`;
+            : `${versionToString(upstream.version, yellow)}\n${
+              versionToString(upstream.latest, green)
+            } (latest)`;
 
         return [name, upstreamVersion, status];
       }
@@ -143,7 +154,11 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
     .render();
 }
 
-async function listVersions(options: GlobalOptions, name: string, versionSpec?: string) {
+async function listVersions(
+  options: GlobalOptions,
+  name: string,
+  versionSpec?: string,
+) {
   const config = await getConfig(options);
   const context = await getContext(options);
 
@@ -158,7 +173,7 @@ async function listVersions(options: GlobalOptions, name: string, versionSpec?: 
   }
 
   if (versionSpec) {
-    versions = versions.filter(v => semver.satisfies(v.main, versionSpec));
+    versions = versions.filter((v) => semver.satisfies(v.main, versionSpec));
   }
 
   for (const v of versions) {
@@ -172,17 +187,28 @@ const cmd = new Command<void>()
     global: true,
   })
   // env is handled as defaults as cliffy doesn't support restricted env yet
-  .option<{ config: string }>("-c --config [value:string]", "Path to config file", {
-    default: Deno.env.get("VERSIONCHECK_CONFIG") ?? "config.yaml",
-    global: true,
-  })
-  .option<{ paths: string }>("-p --paths [value:string]", "Path to paths mapping file", {
-    default: Deno.env.get("VERSIONCHECK_PATHS") ?? "paths.yaml",
-    global: true,
-  })
+  .option<{ config: string }>(
+    "-c --config [value:string]",
+    "Path to config file",
+    {
+      default: Deno.env.get("VERSIONCHECK_CONFIG") ?? "config.yaml",
+      global: true,
+    },
+  )
+  .option<{ paths: string }>(
+    "-p --paths [value:string]",
+    "Path to paths mapping file",
+    {
+      default: Deno.env.get("VERSIONCHECK_PATHS") ?? "paths.yaml",
+      global: true,
+    },
+  )
   .command("check")
   .description("Check versions")
-  .option<{ outdated?: boolean }>("--outdated", "Only list outdated applications")
+  .option<{ outdated?: boolean }>(
+    "--outdated",
+    "Only list outdated applications",
+  )
   .action(checkVersions)
   .reset()
   .command<[string, string | undefined]>("versions <name> [version-spec]")
