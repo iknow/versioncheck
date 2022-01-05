@@ -96,15 +96,23 @@ async function getContext(options: GlobalOptions): Promise<Context> {
   return { paths, cache, update: options.update ?? false };
 }
 
-async function checkVersions(options: GlobalOptions) {
+interface CheckOptions {
+  outdated?: boolean;
+}
+
+async function checkVersions(options: GlobalOptions & CheckOptions) {
   const config = await getConfig(options);
   const context = await getContext(options);
 
-  const checks = await Promise.all(
+  let checks = await Promise.all(
     Object.entries(config).map(([key, value]) =>
       checkVersion(key, value.upstream, value.usages, context)
     ),
   );
+
+  if (options.outdated) {
+    checks = checks.filter(({ outdated }) => Object.entries(outdated).length > 0);
+  }
 
   new Table()
     .border(true)
@@ -181,6 +189,7 @@ await new Command<void>()
   })
   .command("check")
   .description("Check versions")
+  .option<{ outdated?: boolean }>("--outdated", "Only list outdated applications")
   .action(checkVersions)
   .reset()
   .command<[string, string | undefined]>("versions <name> [version-spec]")
