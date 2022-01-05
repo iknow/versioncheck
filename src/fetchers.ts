@@ -85,10 +85,17 @@ const HelmFetchSchema = BaseFetchSchema.extend({
 
 const HelmResponseSchema = z.object({
   apiVersion: z.literal("v1"),
-  entries: z.record(z.array(z.object({
-    apiVersion: z.union([z.literal("v1"), z.literal("v2")]),
-    version: z.string(),
-  }))),
+  entries: z.record(z.array(z.union([
+    z.object({
+      apiVersion: z.literal("v1"),
+      version: z.string(),
+    }),
+    z.object({
+      apiVersion: z.literal("v2"),
+      version: z.string(),
+      appVersion: z.string(),
+    }),
+  ]))),
 });
 
 type HelmFetch = z.infer<typeof HelmFetchSchema>;
@@ -109,8 +116,14 @@ export interface Context {
 }
 
 export interface VersionResult {
-  version: string;
-  latest?: string;
+  version: Version;
+  latest?: Version;
+  versions?: Version[];
+}
+
+export interface Version {
+  main: string;
+  app?: string;
 }
 
 function normalizePaths(source: FileSource, paths: Paths): string {
@@ -198,7 +211,7 @@ function applyRegexpRaw<T>(
 async function fetchGithubRelease(
   spec: GithubReleaseFetch,
   context: Context,
-): Promise<string[]> {
+): Promise<Version[]> {
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/releases`,
     context,
@@ -206,13 +219,13 @@ async function fetchGithubRelease(
   const json = JSON.parse(body);
   const parsed = GithubReleaseResponseSchema.parse(json);
 
-  return parsed.map(({ tag_name }) => tag_name);
+  return parsed.map(({ tag_name }) => ({ main: tag_name }));
 }
 
 async function fetchFile(
   spec: FileFetch,
   context: Context,
-): Promise<string> {
+): Promise<Version> {
   const rawText = await Deno.readTextFile(
     normalizePaths(spec.source, context.paths),
   );
@@ -226,10 +239,10 @@ async function fetchFile(
       throw new Error(`${spec.parser.query} in ${spec.source} not found`);
     }
     version = requireRegexp(version, spec.parser.regexp);
-    return semver.clean(version) ?? version;
+    return { main: semver.clean(version) ?? version };
   } else if (spec.parser.type === "regexp") {
     const version = requireRegexp(rawText, spec.parser.regexp);
-    return semver.clean(version) ?? version;
+    return { main: semver.clean(version) ?? version };
   } else {
     throw new Error("Unknown parser type");
   }
@@ -261,7 +274,7 @@ async function fetchUrl(url: string, context: Context): Promise<string> {
 async function fetchHtml(
   spec: HtmlFetch,
   context: Context,
-): Promise<string[]> {
+): Promise<Version[]> {
   const html = await fetchUrl(spec.url, context);
 
   await initParser();
@@ -270,7 +283,7 @@ async function fetchHtml(
     throw new Error(`Could not parse as HTML: ${html}`);
   }
 
-  const versions: string[] = [];
+  const versions: Version[] = [];
   const elements = doc.querySelectorAll(spec.selector);
   if (elements.length === 0) {
     throw new Error(`Could not find ${spec.selector} in ${html}`);
@@ -280,12 +293,12 @@ async function fetchHtml(
     if (version === null) {
       continue;
     }
-    versions.push(version);
+    versions.push({ main: version });
   }
   return versions;
 }
 
-async function fetchHelm(spec: HelmFetch, context: Context): Promise<string[]> {
+async function fetchHelm(spec: HelmFetch, context: Context): Promise<Version[]> {
   const rawText = await fetchUrl(`${spec.repo}/index.yaml`, context);
   const rawYaml = YAML.parse(rawText);
   const helmRepo = HelmResponseSchema.parse(rawYaml);
@@ -298,7 +311,16 @@ async function fetchHelm(spec: HelmFetch, context: Context): Promise<string[]> {
     throw new Error(`No versions for chart ${spec.chart} of ${spec.repo}`);
   }
 
-  return chartVersions.map(({ version }) => version);
+  return chartVersions.map(entry => {
+    if (entry.apiVersion === "v2") {
+      return {
+        main: entry.version,
+        app: entry.appVersion,
+      };
+    } else {
+      return { main: entry.version };
+    }
+  });
 }
 
 function assertNever(): never {
@@ -318,37 +340,43 @@ export async function fetchVersion(
     throw new Error(`No versions found`);
   }
 
-  let latest: string | undefined;
-
-  for (const versionName of versions) {
-    const versionObject = semver.parse(versionName);
-    if (versionObject === null) {
-      return { version: versionName };
+  const validVersions = versions.flatMap(({ main, app }) => {
+    const parsedVersion = semver.parse(main);
+    if (parsedVersion === null) {
+      return [];
     }
-    if (versionObject.prerelease.length > 0 && !spec.prerelease) {
-      continue;
+    if (parsedVersion.prerelease.length > 0 && !spec.prerelease) {
+      return [];
     }
 
-    const version = versionObject.toString();
-    if (latest === undefined) {
-      latest = version;
-    }
+    const version: Version = {
+      main: parsedVersion.toString(),
+      app: semver.valid(app ?? null) ?? undefined,
+    };
 
-    if (spec.versionSpec) {
-      if (semver.satisfies(version, spec.versionSpec)) {
-        return { version, latest };
-      }
-    } else {
-      return { version, latest };
-    }
+    return version;
+  });
+
+  if (validVersions.length === 0) {
+    throw new Error("No valid versions");
   }
-  throw new Error("No compatible version");
+
+  const latest = validVersions[0];
+  const version = spec.versionSpec
+    ? validVersions.find(({ main }) => semver.satisfies(main, spec.versionSpec!))
+    : latest;
+
+  if (version === undefined) {
+    throw new Error("No compatible version");
+  }
+
+  return { version, latest, versions: validVersions };
 }
 
 export async function fetchVersions(
   spec: Fetch,
   context: Context,
-): Promise<string | string[]> {
+): Promise<Version | Version[]> {
   switch (spec.type) {
     case "github_release":
       return await fetchGithubRelease(spec, context);
