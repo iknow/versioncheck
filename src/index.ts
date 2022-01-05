@@ -166,7 +166,7 @@ async function listVersions(options: GlobalOptions, name: string, versionSpec?: 
   }
 }
 
-await new Command<void>()
+const cmd = new Command<void>()
   .name("versioncheck")
   .option<{ update?: boolean }>("-u --update", "Fetch new upstream versions", {
     global: true,
@@ -188,5 +188,8 @@ await new Command<void>()
   .command<[string, string | undefined]>("versions <name> [version-spec]")
   .description("List available versions")
   .action(listVersions)
-  .reset()
+  .reset();
+
+await cmd
+  .action(() => cmd.showHelp())
   .parse(Deno.args);
