@@ -9,6 +9,8 @@ const ConfigEntrySchema = z.object({
 
 export const ConfigSchema = z.record(ConfigEntrySchema);
 
+export type Config = z.infer<typeof ConfigSchema>;
+
 export const PathsSchema = z.object({
   alias: z.record(z.string()),
   github: z.record(z.string()),
