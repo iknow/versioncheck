@@ -12,6 +12,7 @@ import {
   Context,
   Fetch,
   fetchVersion,
+  normalizePaths,
   Version,
   VersionResult,
 } from "./fetchers.ts";
@@ -140,13 +141,12 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
           ? green("up-to-date")
           : Table.from(statusEntries).toString();
 
-        const upstreamVersion =
-          (upstream.latest === undefined ||
-              upstream.version.main === upstream.latest.main)
-            ? versionToString(upstream.version, green)
-            : `${versionToString(upstream.version, yellow)}\n${
-              versionToString(upstream.latest, green)
-            } (latest)`;
+        const upstreamVersion = (upstream.latest === undefined ||
+            upstream.version.main === upstream.latest.main)
+          ? versionToString(upstream.version, green)
+          : `${versionToString(upstream.version, yellow)}\n${
+            versionToString(upstream.latest, green)
+          } (latest)`;
 
         return [name, upstreamVersion, status];
       }
@@ -179,6 +179,31 @@ async function listVersions(
   for (const v of versions) {
     console.log(versionToString(v, yellow));
   }
+}
+
+async function getPath(
+  options: GlobalOptions,
+  name: string,
+  usage: string,
+) {
+  const config = await getConfig(options);
+  const context = await getContext(options);
+
+  const application = config[name];
+  if (application === undefined) {
+    throw new Error(`${name} not found in config`);
+  }
+
+  const usageSpec = application.usages[usage];
+  if (usageSpec === undefined) {
+    throw new Error(`${name}/${usage} not found in config`);
+  }
+  if (usageSpec.type !== "file") {
+    throw new Error(`Cannot get path for non-file source ${name}/${usage}`);
+  }
+
+  const path = normalizePaths(usageSpec.source, context.paths);
+  console.log(path);
 }
 
 const cmd = new Command<void>()
@@ -214,6 +239,10 @@ const cmd = new Command<void>()
   .command<[string, string | undefined]>("versions <name> [version-spec]")
   .description("List available versions")
   .action(listVersions)
+  .reset()
+  .command<[string, string]>("path <name> <usage>")
+  .description("Get local path for source")
+  .action(getPath)
   .reset();
 
 await cmd

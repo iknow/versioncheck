@@ -126,7 +126,7 @@ export interface Version {
   app?: string;
 }
 
-function normalizePaths(source: FileSource, paths: Paths): string {
+export function normalizePaths(source: FileSource, paths: Paths): string {
   if (typeof source === "string") {
     if (source.startsWith("/")) {
       return normalizePaths({ type: "local", path: source }, paths);
