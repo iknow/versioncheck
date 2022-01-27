@@ -84,6 +84,24 @@ function versionToString(value: Version, color: (s: string) => string): string {
   return color(value.main) + (value.app ? ` [${value.app}]` : "");
 }
 
+function filterObject<T>(o: Record<string, T>, fn: (value: T, key: string) => boolean): Record<string, T> {
+  const result: Record<string, T> = {};
+  for (const [key, value] of Object.entries(o)) {
+    if (fn(value, key)) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function mapObject<A, B>(o: Record<string, A>, fn: (a: A) => B): Record<string, B> {
+  const result: Record<string, B> = {};
+  for (const [key, value] of Object.entries(o)) {
+    result[key] = fn(value);
+  }
+  return result;
+}
+
 interface GlobalOptions {
   update?: boolean;
   config: string;
@@ -105,11 +123,20 @@ async function getContext(options: GlobalOptions): Promise<Context> {
 
 interface CheckOptions {
   outdated?: boolean;
+  usage?: string;
 }
 
 async function checkVersions(options: GlobalOptions & CheckOptions) {
-  const config = await getConfig(options);
+  let config = await getConfig(options);
   const context = await getContext(options);
+
+  const usageFilter = options.usage;
+  if (usageFilter) {
+    config = mapObject(config, (({ usages, ...rest }) => {
+      return { ...rest, usages: filterObject(usages, (_, key) => key === usageFilter) };
+    }));
+    config = filterObject(config, (({ usages }) => Object.entries(usages).length > 0));
+  }
 
   let checks = await Promise.all(
     Object.entries(config).map(([key, value]) =>
@@ -233,6 +260,10 @@ const cmd = new Command<void>()
   .option<{ outdated?: boolean }>(
     "--outdated",
     "Only list outdated applications",
+  )
+  .option<{ usage?: string }>(
+    "--usage <usage:string>",
+    "List only the specified usage",
   )
   .action(checkVersions)
   .reset()
