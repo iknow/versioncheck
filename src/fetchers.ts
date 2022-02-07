@@ -85,17 +85,11 @@ const HelmFetchSchema = BaseFetchSchema.extend({
 
 const HelmResponseSchema = z.object({
   apiVersion: z.literal("v1"),
-  entries: z.record(z.array(z.union([
-    z.object({
-      apiVersion: z.literal("v1"),
-      version: z.string(),
-    }),
-    z.object({
-      apiVersion: z.literal("v2"),
-      version: z.string(),
-      appVersion: z.string(),
-    }),
-  ]))),
+  entries: z.record(z.array(z.object({
+    apiVersion: z.union([z.literal("v1"), z.literal("v2")]),
+    version: z.string(),
+    appVersion: z.string().optional(),
+  }))),
 });
 
 type HelmFetch = z.infer<typeof HelmFetchSchema>;
@@ -315,7 +309,7 @@ async function fetchHelm(
   }
 
   return chartVersions.map((entry) => {
-    if (entry.apiVersion === "v2") {
+    if (entry.appVersion !== undefined) {
       return {
         main: entry.version,
         app: entry.appVersion,
