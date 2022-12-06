@@ -122,7 +122,8 @@ export class Version {
   public readonly prerelease: boolean;
 
   constructor(main: string, app?: string, prerelease?: boolean) {
-    this.semantic = semver.coerce(main);
+    // coerce does not include prerelease tags so we try strict parsing first and then coerce if that fails
+    this.semantic = semver.parse(main) ?? semver.coerce(main);
     this.main = cleanVersion(main);
     this.app = app && cleanVersion(app);
     this.prerelease = prerelease === undefined
