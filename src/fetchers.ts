@@ -371,6 +371,14 @@ export async function fetchVersion(
     throw new Error("No valid versions");
   }
 
+  validVersions.sort((a, b) => {
+    if (a.semantic !== null && b.semantic !== null) {
+      return semver.rcompare(a.semantic, b.semantic);
+    } else {
+      return -a.main.localeCompare(b.main);
+    }
+  });
+
   const latest = validVersions[0];
   const version = spec.versionSpec
     ? validVersions.find(({ semantic }) =>
