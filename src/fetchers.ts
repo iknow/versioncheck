@@ -338,7 +338,7 @@ export async function fetchVersion(
   }
 
   const validVersions = versions.flatMap(({ main, app }) => {
-    const parsedVersion = semver.parse(main);
+    const parsedVersion = semver.coerce(main);
     if (parsedVersion === null) {
       return [];
     }
