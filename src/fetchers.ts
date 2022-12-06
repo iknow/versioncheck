@@ -115,9 +115,29 @@ export interface VersionResult {
   versions?: Version[];
 }
 
-export interface Version {
-  main: string;
-  app?: string;
+export class Version {
+  public readonly semantic: semver.SemVer | null;
+  public readonly main: string;
+  public readonly app?: string;
+  public readonly prerelease: boolean;
+
+  constructor(main: string, app?: string, prerelease?: boolean) {
+    this.semantic = semver.coerce(main);
+    this.main = cleanVersion(main);
+    this.app = app && cleanVersion(app);
+    this.prerelease = prerelease === undefined
+      ? (this.semantic !== null && this.semantic.prerelease.length > 0)
+      : prerelease;
+  }
+}
+
+/**
+ * Cleans the version string
+ *
+ * Primarily, we want to strip the leading `v` even for non-semver versions.
+ */
+function cleanVersion(version: string): string {
+  return semver.clean(version) ?? version.replace(/^v([0-9])/, "$1");
 }
 
 export function normalizePaths(source: FileSource, paths: Paths): string {
@@ -213,7 +233,13 @@ async function fetchGithubRelease(
   const json = JSON.parse(body);
   const parsed = GithubReleaseResponseSchema.parse(json);
 
-  return parsed.map(({ tag_name }) => ({ main: tag_name }));
+  return parsed.flatMap(({ tag_name, prerelease }) => {
+    const version = applyRegexp(tag_name, spec.regexp);
+    if (version === null) {
+      return [];
+    }
+    return new Version(version, undefined, prerelease);
+  });
 }
 
 async function fetchFile(
@@ -233,10 +259,10 @@ async function fetchFile(
       throw new Error(`${spec.parser.query} in ${spec.source} not found`);
     }
     version = requireRegexp(version, spec.parser.regexp);
-    return { main: semver.clean(version) ?? version };
+    return new Version(version);
   } else if (spec.parser.type === "regexp") {
     const version = requireRegexp(rawText, spec.parser.regexp);
-    return { main: semver.clean(version) ?? version };
+    return new Version(version);
   } else {
     throw new Error("Unknown parser type");
   }
@@ -287,7 +313,7 @@ async function fetchHtml(
     if (version === null) {
       continue;
     }
-    versions.push({ main: version });
+    versions.push(new Version(version));
   }
   return versions;
 }
@@ -310,12 +336,9 @@ async function fetchHelm(
 
   return chartVersions.map((entry) => {
     if (entry.appVersion !== undefined) {
-      return {
-        main: entry.version,
-        app: entry.appVersion,
-      };
+      return new Version(entry.version, entry.appVersion);
     } else {
-      return { main: entry.version };
+      return new Version(entry.version);
     }
   });
 }
@@ -337,22 +360,11 @@ export async function fetchVersion(
     throw new Error(`No versions found`);
   }
 
-  const validVersions = versions.flatMap(({ main, app }) => {
-    const parsedVersion = semver.coerce(main);
-    if (parsedVersion === null) {
-      return [];
-    }
-    if (parsedVersion.prerelease.length > 0 && !spec.prerelease) {
-      return [];
-    }
-
-    const version: Version = {
-      main: parsedVersion.toString(),
-      app: semver.valid(app ?? null) ?? undefined,
-    };
-
-    return version;
-  });
+  const validVersions = spec.prerelease
+    ? versions
+    : versions.filter(({ prerelease }) => {
+      return !prerelease;
+    });
 
   if (validVersions.length === 0) {
     throw new Error("No valid versions");
@@ -360,8 +372,8 @@ export async function fetchVersion(
 
   const latest = validVersions[0];
   const version = spec.versionSpec
-    ? validVersions.find(({ main }) =>
-      semver.satisfies(main, spec.versionSpec!)
+    ? validVersions.find(({ semantic }) =>
+      semantic !== null && semver.satisfies(semantic, spec.versionSpec!)
     )
     : latest;
 
