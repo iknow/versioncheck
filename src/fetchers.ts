@@ -116,18 +116,22 @@ export interface VersionResult {
 }
 
 export class Version {
-  public readonly semantic: semver.SemVer | null;
+  public readonly semantic: semver.SemVer;
   public readonly main: string;
   public readonly app?: string;
   public readonly prerelease: boolean;
 
   constructor(main: string, app?: string, prerelease?: boolean) {
     // coerce does not include prerelease tags so we try strict parsing first and then coerce if that fails
-    this.semantic = semver.parse(main) ?? semver.coerce(main);
+    const semantic = semver.parse(main) ?? semver.coerce(main);
+    if (semantic === null) {
+      throw new Error(`'${main}' could not be parsed as a version`);
+    }
+    this.semantic = semantic;
     this.main = cleanVersion(main);
     this.app = app && cleanVersion(app);
     this.prerelease = prerelease === undefined
-      ? (this.semantic !== null && this.semantic.prerelease.length > 0)
+      ? this.semantic.prerelease.length > 0
       : prerelease;
   }
 }
@@ -372,17 +376,17 @@ export async function fetchVersion(
   }
 
   validVersions.sort((a, b) => {
-    if (a.semantic !== null && b.semantic !== null) {
-      return semver.rcompare(a.semantic, b.semantic);
-    } else {
-      return -a.main.localeCompare(b.main);
+    let result: number = semver.rcompare(a.semantic, b.semantic);
+    if (result === 0) {
+      result = -a.main.localeCompare(b.main);
     }
+    return result;
   });
 
   const latest = validVersions[0];
   const version = spec.versionSpec
     ? validVersions.find(({ semantic }) =>
-      semantic !== null && semver.satisfies(semantic, spec.versionSpec!)
+      semver.satisfies(semantic, spec.versionSpec!)
     )
     : latest;
 
