@@ -33,6 +33,19 @@ const GithubReleaseResponseSchema = z.array(z.object({
 
 type GithubReleaseFetch = z.infer<typeof GithubReleaseFetchSchema>;
 
+const GithubTagFetchSchema = BaseFetchSchema.extend({
+  type: z.literal("github_tag"),
+  owner: z.string(),
+  repo: z.string(),
+  regexp: z.string().optional(),
+});
+
+const GithubTagResponseSchema = z.array(z.object({
+  name: z.string(),
+}));
+
+type GithubTagFetch = z.infer<typeof GithubReleaseFetchSchema>;
+
 const FileSourceSchema = z.union([
   z.string(),
   z.object({
@@ -96,6 +109,7 @@ type HelmFetch = z.infer<typeof HelmFetchSchema>;
 
 export const FetchSchema = z.union([
   GithubReleaseFetchSchema,
+  GithubTagFetchSchema,
   FileFetchSchema,
   HtmlFetchSchema,
   HelmFetchSchema,
@@ -244,6 +258,26 @@ async function fetchGithubRelease(
       return [];
     }
     return new Version(version, undefined, prerelease);
+  });
+}
+
+async function fetchGithubTag(
+  spec: GithubTagFetch,
+  context: Context
+): Promise<Version[]> {
+  const body = await fetchUrl(
+    `https://api.github.com/repos/${spec.owner}/${spec.repo}/tags`,
+    context,
+  );
+  const json = JSON.parse(body);
+  const parsed = GithubTagResponseSchema.parse(json);
+
+  return parsed.flatMap(({ name }) => {
+    const version = applyRegexp(name, spec.regexp);
+    if (version === null) {
+      return [];
+    }
+    return new Version(version, undefined);
   });
 }
 
@@ -404,6 +438,8 @@ export async function fetchVersions(
   switch (spec.type) {
     case "github_release":
       return await fetchGithubRelease(spec, context);
+    case "github_tag":
+      return await fetchGithubTag(spec, context);
     case "file":
       return await fetchFile(spec, context);
     case "html":
