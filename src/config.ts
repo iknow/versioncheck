@@ -1,5 +1,4 @@
-import { z } from "https://deno.land/x/zod@v3.11.6/index.ts";
-import { parse } from "https://deno.land/std@0.119.0/encoding/yaml.ts";
+import { YAML, z } from "./deps.ts";
 import { FetchSchema } from "./fetchers.ts";
 
 const ConfigEntrySchema = z.object({
@@ -18,10 +17,10 @@ export const PathsSchema = z.object({
 
 export type Paths = z.infer<typeof PathsSchema>;
 
-export async function loadYaml<Output, Def, Input>(
+export async function loadYaml<Output, Def extends z.ZodTypeDef, Input>(
   path: string,
   parser: z.ZodSchema<Output, Def, Input>,
 ): Promise<Output> {
-  const yaml = parse(await Deno.readTextFile(path));
+  const yaml = YAML.parse(await Deno.readTextFile(path));
   return parser.parse(yaml);
 }

@@ -1,12 +1,4 @@
-import {
-  bold,
-  green,
-  red,
-  yellow,
-} from "https://deno.land/std@0.119.0/fmt/colors.ts";
-import { Command } from "https://deno.land/x/cliffy@v0.20.1/command/mod.ts";
-import { Row, Table } from "https://deno.land/x/cliffy@v0.20.1/table/mod.ts";
-import * as semver from "https://deno.land/x/semver@v1.4.0/mod.ts";
+import { cliffy, cliffyTable, colors, semver } from "./deps.ts";
 import { Config, ConfigSchema, loadYaml, PathsSchema } from "./config.ts";
 import {
   Context,
@@ -84,7 +76,10 @@ function versionToString(value: Version, color: (s: string) => string): string {
   return color(value.main) + (value.app ? ` [${value.app}]` : "");
 }
 
-function filterObject<T>(o: Record<string, T>, fn: (value: T, key: string) => boolean): Record<string, T> {
+function filterObject<T>(
+  o: Record<string, T>,
+  fn: (value: T, key: string) => boolean,
+): Record<string, T> {
   const result: Record<string, T> = {};
   for (const [key, value] of Object.entries(o)) {
     if (fn(value, key)) {
@@ -94,7 +89,10 @@ function filterObject<T>(o: Record<string, T>, fn: (value: T, key: string) => bo
   return result;
 }
 
-function mapObject<A, B>(o: Record<string, A>, fn: (a: A) => B): Record<string, B> {
+function mapObject<A, B>(
+  o: Record<string, A>,
+  fn: (a: A) => B,
+): Record<string, B> {
   const result: Record<string, B> = {};
   for (const [key, value] of Object.entries(o)) {
     result[key] = fn(value);
@@ -132,10 +130,16 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
 
   const usageFilter = options.usage;
   if (usageFilter) {
-    config = mapObject(config, (({ usages, ...rest }) => {
-      return { ...rest, usages: filterObject(usages, (_, key) => key === usageFilter) };
-    }));
-    config = filterObject(config, (({ usages }) => Object.entries(usages).length > 0));
+    config = mapObject(config, ({ usages, ...rest }) => {
+      return {
+        ...rest,
+        usages: filterObject(usages, (_, key) => key === usageFilter),
+      };
+    });
+    config = filterObject(
+      config,
+      ({ usages }) => Object.entries(usages).length > 0,
+    );
   }
 
   let checks = await Promise.all(
@@ -150,29 +154,31 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
     );
   }
 
-  new Table()
+  new cliffyTable.Table()
     .border(true)
-    .header(Row.from(["Name", "Upstream", "Status"].map(bold)))
+    .header(
+      cliffyTable.Row.from(["Name", "Upstream", "Status"].map(colors.bold)),
+    )
     .body(checks.map(({ name, upstream, outdated, errored }) => {
       if (upstream === null) {
-        return [name, red("error")];
+        return [name, colors.red("error")];
       } else {
         const statusEntries = Object.entries(outdated).map(([key, value]) => {
-          return [key, versionToString(value.version, yellow)];
+          return [key, versionToString(value.version, colors.yellow)];
         })
           .concat(errored.map((key) => {
-            return [key, red("error")];
+            return [key, colors.red("error")];
           }));
 
         const status = statusEntries.length === 0
-          ? green("up-to-date")
-          : Table.from(statusEntries).toString();
+          ? colors.green("up-to-date")
+          : cliffyTable.Table.from(statusEntries).toString();
 
         const upstreamVersion = (upstream.latest === undefined ||
             upstream.version.main === upstream.latest.main)
-          ? versionToString(upstream.version, green)
-          : `${versionToString(upstream.version, yellow)}\n${
-            versionToString(upstream.latest, green)
+          ? versionToString(upstream.version, colors.green)
+          : `${versionToString(upstream.version, colors.yellow)}\n${
+            versionToString(upstream.latest, colors.green)
           } (latest)`;
 
         return [name, upstreamVersion, status];
@@ -204,7 +210,7 @@ async function listVersions(
   }
 
   for (const v of versions) {
-    console.log(versionToString(v, yellow));
+    console.log(versionToString(v, colors.yellow));
   }
 }
 
@@ -233,22 +239,23 @@ async function getPath(
   console.log(path);
 }
 
-const cmd = new Command<void>()
+const cmd = new cliffy.Command<void>()
   .name("versioncheck")
-  .option<{ update?: boolean }>("-u --update", "Fetch new upstream versions", {
+  .option("-u, --update", "Fetch new upstream versions", {
+    default: false,
     global: true,
   })
   // env is handled as defaults as cliffy doesn't support restricted env yet
-  .option<{ config: string }>(
-    "-c --config [value:string]",
+  .option(
+    "-c, --config <value:string>",
     "Path to config file",
     {
       default: Deno.env.get("VERSIONCHECK_CONFIG") ?? "config.yaml",
       global: true,
     },
   )
-  .option<{ paths: string }>(
-    "-p --paths [value:string]",
+  .option(
+    "-p, --paths <value:string>",
     "Path to paths mapping file",
     {
       default: Deno.env.get("VERSIONCHECK_PATHS") ?? "paths.yaml",
@@ -257,21 +264,21 @@ const cmd = new Command<void>()
   )
   .command("check")
   .description("Check versions")
-  .option<{ outdated?: boolean }>(
+  .option(
     "--outdated",
     "Only list outdated applications",
   )
-  .option<{ usage?: string }>(
+  .option(
     "--usage <usage:string>",
     "List only the specified usage",
   )
   .action(checkVersions)
   .reset()
-  .command<[string, string | undefined]>("versions <name> [version-spec]")
+  .command("versions <name> [version-spec]")
   .description("List available versions")
   .action(listVersions)
   .reset()
-  .command<[string, string]>("path <name> <usage>")
+  .command("path <name> <usage>")
   .description("Get local path for source")
   .action(getPath)
   .reset();

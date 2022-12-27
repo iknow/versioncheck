@@ -1,15 +1,4 @@
-import { join } from "https://deno.land/std@0.119.0/path/mod.ts";
-import { z } from "https://deno.land/x/zod@v3.11.6/index.ts";
-import {
-  DOMParser,
-  initParser,
-} from "https://deno.land/x/deno_dom/deno-dom-wasm-noinit.ts";
-import * as YAML from "https://deno.land/std@0.119.0/encoding/yaml.ts";
-import * as semver from "https://deno.land/x/semver@v1.4.0/mod.ts";
-import {
-  JSONValue,
-  search,
-} from "https://deno.land/x/jmespath@v0.2.2/index.ts";
+import { dom, jmespath, path, semver, YAML, z } from "./deps.ts";
 import { Cache } from "./cache.ts";
 import { Paths } from "./config.ts";
 
@@ -44,7 +33,7 @@ const GithubTagResponseSchema = z.array(z.object({
   name: z.string(),
 }));
 
-type GithubTagFetch = z.infer<typeof GithubReleaseFetchSchema>;
+type GithubTagFetch = z.infer<typeof GithubTagFetchSchema>;
 
 const FileSourceSchema = z.union([
   z.string(),
@@ -176,7 +165,7 @@ export function normalizePaths(source: FileSource, paths: Paths): string {
         owner,
         repo,
         rev,
-        path: join(...rest),
+        path: path.join(...rest),
       }, paths);
     } else {
       throw new Error(`Unsupported path: ${source}`);
@@ -203,7 +192,7 @@ export function normalizePaths(source: FileSource, paths: Paths): string {
     }
     return normalizePaths({
       type: "local",
-      path: join(mappedPath, source.path),
+      path: path.join(mappedPath, source.path),
     }, paths);
   } else {
     throw new Error("Unreachable code");
@@ -263,7 +252,7 @@ async function fetchGithubRelease(
 
 async function fetchGithubTag(
   spec: GithubTagFetch,
-  context: Context
+  context: Context,
 ): Promise<Version[]> {
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/tags`,
@@ -293,7 +282,10 @@ async function fetchFile(
     if (Array.isArray(rawYaml) && rawYaml.length === 1) {
       rawYaml = rawYaml[0];
     }
-    let version = search(rawYaml as JSONValue, spec.parser.query)?.toString();
+    let version = jmespath.search(
+      rawYaml as jmespath.JSONValue,
+      spec.parser.query,
+    )?.toString();
     if (version === undefined) {
       throw new Error(`${spec.parser.query} in ${spec.source} not found`);
     }
@@ -336,8 +328,8 @@ async function fetchHtml(
 ): Promise<Version[]> {
   const html = await fetchUrl(spec.url, context);
 
-  await initParser();
-  const doc = new DOMParser().parseFromString(html, "text/html");
+  await dom.initParser();
+  const doc = new dom.DOMParser().parseFromString(html, "text/html");
   if (doc === null) {
     throw new Error(`Could not parse as HTML: ${html}`);
   }
