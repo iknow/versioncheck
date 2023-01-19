@@ -1,9 +1,10 @@
 import { YAML, z } from "./deps.ts";
 import { FetchSchema } from "./fetchers.ts";
+import { UsageSchema } from "./usage.ts";
 
 const ConfigEntrySchema = z.object({
   upstream: FetchSchema,
-  usages: z.record(FetchSchema),
+  usages: z.record(UsageSchema),
 });
 
 export const ConfigSchema = z.record(ConfigEntrySchema);

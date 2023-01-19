@@ -1,31 +1,34 @@
 import { cliffy, cliffyTable, colors, semver } from "./deps.ts";
 import { Config, ConfigSchema, loadYaml, PathsSchema } from "./config.ts";
-import {
-  Context,
-  Fetch,
-  fetchVersion,
-  normalizePaths,
-  Version,
-  VersionResult,
-} from "./fetchers.ts";
+import { Fetch, FetchContext, FetchResult, fetchVersion } from "./fetchers.ts";
 import { Cache } from "./cache.ts";
+import {
+  getUsage,
+  normalizePaths,
+  normalizeSource,
+  Usage,
+  UsageContext,
+} from "./usage.ts";
+import { Version } from "./version.ts";
 
 interface CheckResult {
   name: string;
-  upstream: VersionResult | null;
-  outdated: Record<string, VersionResult>;
+  upstream: FetchResult | null;
+  outdated: Record<string, Version>;
   errored: string[];
 }
 
 async function checkVersion(
   name: string,
   upstream: Fetch,
-  usages: Record<string, Fetch>,
-  context: Context,
+  usages: Record<string, Usage>,
+  fetchContext: FetchContext,
+  usageContext: UsageContext,
 ): Promise<CheckResult> {
-  const promises = [upstream, ...Object.values(usages)].map((spec) =>
-    fetchVersion(spec, context)
-  );
+  const promises = [
+    fetchVersion(upstream, fetchContext),
+    ...Object.values(usages).map((spec) => getUsage(spec, usageContext)),
+  ] as const;
   const keys = Object.keys(usages);
 
   const [upstreamResult, ...restResult] = await Promise.allSettled(promises);
@@ -36,7 +39,7 @@ async function checkVersion(
     console.error(upstreamResult.reason);
   }
 
-  const rest: [string, VersionResult][] = [];
+  const rest: [string, Version][] = [];
   const errored: string[] = [];
   restResult.forEach((result, index) => {
     const key = keys[index];
@@ -48,15 +51,15 @@ async function checkVersion(
     }
   });
 
-  const outdated: Record<string, VersionResult> = {};
+  const outdated: Record<string, Version> = {};
   if (upstreamVersion !== null) {
     for (const [key, version] of rest) {
-      if (version.version.main !== upstreamVersion.version.main) {
+      if (version.main !== upstreamVersion.version.main) {
         if (upstreamVersion.versions !== undefined) {
           const fullVersion = upstreamVersion.versions.find(({ main }) => {
-            return main === version.version.main;
+            return main === version.main;
           });
-          outdated[key] = fullVersion ? { version: fullVersion } : version;
+          outdated[key] = fullVersion ?? version;
         } else {
           outdated[key] = version;
         }
@@ -103,20 +106,48 @@ function mapObject<A, B>(
 interface GlobalOptions {
   update?: boolean;
   config: string;
-  paths: string;
+  paths?: string;
+  token?: string;
 }
 
 async function getConfig(options: GlobalOptions): Promise<Config> {
   return await loadYaml(options.config, ConfigSchema);
 }
 
-async function getContext(options: GlobalOptions): Promise<Context> {
-  const paths = await loadYaml(options.paths, PathsSchema);
+function getFetchContext(options: GlobalOptions): FetchContext {
   const cache = new Cache();
   if (options.update) {
     console.log("Fetching upstream...");
   }
-  return { paths, cache, update: options.update ?? false };
+  return { cache, update: options.update ?? false };
+}
+
+function parseTokens(token: string) {
+  return Object.fromEntries(
+    token
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t !== "")
+      .map((t) => {
+        const split = t.split(":");
+        if (split.length === 2) {
+          return split;
+        } else {
+          return ["default", t];
+        }
+      }),
+  );
+}
+
+async function getUsageContext(options: GlobalOptions): Promise<UsageContext> {
+  const paths = options.paths
+    ? await loadYaml(options.paths, PathsSchema)
+    : undefined;
+
+  return {
+    paths,
+    tokens: options.token ? parseTokens(options.token) : undefined,
+  };
 }
 
 interface CheckOptions {
@@ -126,7 +157,8 @@ interface CheckOptions {
 
 async function checkVersions(options: GlobalOptions & CheckOptions) {
   let config = await getConfig(options);
-  const context = await getContext(options);
+  const fetchContext = getFetchContext(options);
+  const usageContext = await getUsageContext(options);
 
   const usageFilter = options.usage;
   if (usageFilter) {
@@ -144,7 +176,13 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
 
   let checks = await Promise.all(
     Object.entries(config).map(([key, value]) =>
-      checkVersion(key, value.upstream, value.usages, context)
+      checkVersion(
+        key,
+        value.upstream,
+        value.usages,
+        fetchContext,
+        usageContext,
+      )
     ),
   );
 
@@ -164,7 +202,7 @@ async function checkVersions(options: GlobalOptions & CheckOptions) {
         return [name, colors.red("error")];
       } else {
         const statusEntries = Object.entries(outdated).map(([key, value]) => {
-          return [key, versionToString(value.version, colors.yellow)];
+          return [key, versionToString(value, colors.yellow)];
         })
           .concat(errored.map((key) => {
             return [key, colors.red("error")];
@@ -193,7 +231,7 @@ async function listVersions(
   versionSpec?: string,
 ) {
   const config = await getConfig(options);
-  const context = await getContext(options);
+  const context = getFetchContext(options);
 
   const application = config[name];
   if (application === undefined) {
@@ -220,7 +258,7 @@ async function getPath(
   usage: string,
 ) {
   const config = await getConfig(options);
-  const context = await getContext(options);
+  const context = await getUsageContext(options);
 
   const application = config[name];
   if (application === undefined) {
@@ -235,22 +273,37 @@ async function getPath(
     throw new Error(`Cannot get path for non-file source ${name}/${usage}`);
   }
 
-  const path = normalizePaths(usageSpec.source, context.paths);
+  if (!context.paths) {
+    throw new Error("--paths must be specified to get the local path");
+  }
+
+  const source = normalizeSource(usageSpec.source);
+  const path = normalizePaths(source, context.paths);
   console.log(path);
 }
 
 const cmd = new cliffy.Command<void>()
   .name("versioncheck")
-  .option("-u, --update", "Fetch new upstream versions", {
-    default: false,
+  .env("VERSIONCHECK_CONFIG=<value:string>", "Path to config file", {
+    prefix: "VERSIONCHECK_",
     global: true,
   })
-  // env is handled as defaults as cliffy doesn't support restricted env yet
+  .env("VERSIONCHECK_PATHS=<value:string>", "Path to paths mapping file", {
+    prefix: "VERSIONCHECK_",
+    global: true,
+  })
+  .env("GITHUB_TOKEN=<value:string>", "GitHub token for fetching files", {
+    prefix: "GITHUB_",
+    global: true,
+  })
+  .option("-u, --update", "Fetch new upstream versions", {
+    global: true,
+  })
   .option(
     "-c, --config <value:string>",
     "Path to config file",
     {
-      default: Deno.env.get("VERSIONCHECK_CONFIG") ?? "config.yaml",
+      default: "config.yaml",
       global: true,
     },
   )
@@ -258,7 +311,13 @@ const cmd = new cliffy.Command<void>()
     "-p, --paths <value:string>",
     "Path to paths mapping file",
     {
-      default: Deno.env.get("VERSIONCHECK_PATHS") ?? "paths.yaml",
+      global: true,
+    },
+  )
+  .option(
+    "-t, --token <value:string>",
+    "GitHub token for fetching files",
+    {
       global: true,
     },
   )
