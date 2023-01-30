@@ -1,6 +1,6 @@
-import { dom, jmespath, path, semver, YAML, z } from "./deps.ts";
+import { dom, semver, YAML, z } from "./deps.ts";
 import { Cache } from "./cache.ts";
-import { Paths } from "./config.ts";
+import { applyRegexp, Version } from "./version.ts";
 
 const BaseFetchSchema = z.object({
   versionSpec: z.string().optional(),
@@ -35,41 +35,6 @@ const GithubTagResponseSchema = z.array(z.object({
 
 type GithubTagFetch = z.infer<typeof GithubTagFetchSchema>;
 
-const FileSourceSchema = z.union([
-  z.string(),
-  z.object({
-    type: z.literal("local"),
-    path: z.string(),
-  }),
-  z.object({
-    type: z.literal("github"),
-    owner: z.string(),
-    repo: z.string(),
-    path: z.string(),
-    rev: z.string().default("HEAD"),
-  }),
-]);
-
-type FileSource = z.infer<typeof FileSourceSchema>;
-
-const FileFetchSchema = BaseFetchSchema.extend({
-  type: z.literal("file"),
-  source: FileSourceSchema,
-  parser: z.union([
-    z.object({
-      type: z.literal("yaml"),
-      query: z.string(),
-      regexp: z.string().optional(),
-    }),
-    z.object({
-      type: z.literal("regexp"),
-      regexp: z.string(),
-    }),
-  ]),
-});
-
-type FileFetch = z.infer<typeof FileFetchSchema>;
-
 const HtmlFetchSchema = BaseFetchSchema.extend({
   type: z.literal("html"),
   url: z.string(),
@@ -99,140 +64,26 @@ type HelmFetch = z.infer<typeof HelmFetchSchema>;
 export const FetchSchema = z.union([
   GithubReleaseFetchSchema,
   GithubTagFetchSchema,
-  FileFetchSchema,
   HtmlFetchSchema,
   HelmFetchSchema,
 ]);
 
 export type Fetch = z.infer<typeof FetchSchema>;
 
-export interface Context {
-  paths: Paths;
+export interface FetchContext {
   cache: Cache;
   update: boolean;
 }
 
-export interface VersionResult {
+export interface FetchResult {
   version: Version;
   latest?: Version;
   versions?: Version[];
 }
 
-export class Version {
-  public readonly semantic: semver.SemVer;
-  public readonly main: string;
-  public readonly app?: string;
-  public readonly prerelease: boolean;
-
-  constructor(main: string, app?: string, prerelease?: boolean) {
-    // coerce does not include prerelease tags so we try strict parsing first and then coerce if that fails
-    const semantic = semver.parse(main) ?? semver.coerce(main);
-    if (semantic === null) {
-      throw new Error(`'${main}' could not be parsed as a version`);
-    }
-    this.semantic = semantic;
-    this.main = cleanVersion(main);
-    this.app = app && cleanVersion(app);
-    this.prerelease = prerelease === undefined
-      ? this.semantic.prerelease.length > 0
-      : prerelease;
-  }
-}
-
-/**
- * Cleans the version string
- *
- * Primarily, we want to strip the leading `v` even for non-semver versions.
- */
-function cleanVersion(version: string): string {
-  return semver.clean(version) ?? version.replace(/^v([0-9])/, "$1");
-}
-
-export function normalizePaths(source: FileSource, paths: Paths): string {
-  if (typeof source === "string") {
-    if (source.startsWith("/")) {
-      return normalizePaths({ type: "local", path: source }, paths);
-    }
-
-    const url = new URL(source);
-    if (url.host === "github.com") {
-      const [_, owner, repo, type, rev, ...rest] = url.pathname.split("/");
-      if (type !== "blob" || rev === undefined || rest.length === 0) {
-        throw new Error(`Invalid github URL: ${source}`);
-      }
-      return normalizePaths({
-        type: "github",
-        owner,
-        repo,
-        rev,
-        path: path.join(...rest),
-      }, paths);
-    } else {
-      throw new Error(`Unsupported path: ${source}`);
-    }
-  } else if (source.type === "local") {
-    let newPath = source.path;
-    let changed: boolean;
-    do {
-      changed = false;
-      for (const [key, value] of Object.entries(paths.alias)) {
-        const replacedPath = newPath.replaceAll(key, value);
-        if (replacedPath !== newPath) {
-          changed = true;
-        }
-        newPath = replacedPath;
-      }
-    } while (changed);
-    return newPath;
-  } else if (source.type === "github") {
-    const pathKey = `${source.owner}/${source.repo}`;
-    const mappedPath = paths.github[pathKey];
-    if (mappedPath === undefined) {
-      throw new Error(`Could not resolve github path ${pathKey}`);
-    }
-    return normalizePaths({
-      type: "local",
-      path: path.join(mappedPath, source.path),
-    }, paths);
-  } else {
-    throw new Error("Unreachable code");
-  }
-}
-
-function applyRegexp(raw: string, regexp: string | undefined): string | null {
-  return applyRegexpRaw(raw, regexp, () => {
-    return null;
-  });
-}
-
-function requireRegexp(raw: string, regexp: string | undefined): string {
-  return applyRegexpRaw(raw, regexp, () => {
-    throw new Error(`No match for ${regexp} in ${raw}`);
-  });
-}
-
-function applyRegexpRaw<T>(
-  raw: string,
-  regexp: string | undefined,
-  onFail: () => T,
-): string | T {
-  if (regexp) {
-    const result = raw.match(new RegExp(regexp, "sm"));
-    if (result === null) {
-      return onFail();
-    }
-    if (result.length > 1) {
-      return result[1];
-    } else {
-      return result[0];
-    }
-  }
-  return raw;
-}
-
 async function fetchGithubRelease(
   spec: GithubReleaseFetch,
-  context: Context,
+  context: FetchContext,
 ): Promise<Version[]> {
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/releases`,
@@ -252,7 +103,7 @@ async function fetchGithubRelease(
 
 async function fetchGithubTag(
   spec: GithubTagFetch,
-  context: Context,
+  context: FetchContext,
 ): Promise<Version[]> {
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/tags`,
@@ -270,36 +121,7 @@ async function fetchGithubTag(
   });
 }
 
-async function fetchFile(
-  spec: FileFetch,
-  context: Context,
-): Promise<Version> {
-  const rawText = await Deno.readTextFile(
-    normalizePaths(spec.source, context.paths),
-  );
-  if (spec.parser.type === "yaml") {
-    let rawYaml = YAML.parseAll(rawText);
-    if (Array.isArray(rawYaml) && rawYaml.length === 1) {
-      rawYaml = rawYaml[0];
-    }
-    let version = jmespath.search(
-      rawYaml as jmespath.JSONValue,
-      spec.parser.query,
-    )?.toString();
-    if (version === undefined) {
-      throw new Error(`${spec.parser.query} in ${spec.source} not found`);
-    }
-    version = requireRegexp(version, spec.parser.regexp);
-    return new Version(version);
-  } else if (spec.parser.type === "regexp") {
-    const version = requireRegexp(rawText, spec.parser.regexp);
-    return new Version(version);
-  } else {
-    throw new Error("Unknown parser type");
-  }
-}
-
-async function fetchUrl(url: string, context: Context): Promise<string> {
+async function fetchUrl(url: string, context: FetchContext): Promise<string> {
   let body = undefined as string | undefined;
   if (!context.update) {
     const cached = context.cache.getBody(url);
@@ -324,7 +146,7 @@ async function fetchUrl(url: string, context: Context): Promise<string> {
 
 async function fetchHtml(
   spec: HtmlFetch,
-  context: Context,
+  context: FetchContext,
 ): Promise<Version[]> {
   const html = await fetchUrl(spec.url, context);
 
@@ -351,7 +173,7 @@ async function fetchHtml(
 
 async function fetchHelm(
   spec: HelmFetch,
-  context: Context,
+  context: FetchContext,
 ): Promise<Version[]> {
   const rawText = await fetchUrl(`${spec.repo}/index.yaml`, context);
   const rawYaml = YAML.parse(rawText);
@@ -380,8 +202,8 @@ function assertNever(): never {
 
 export async function fetchVersion(
   spec: Fetch,
-  context: Context,
-): Promise<VersionResult> {
+  context: FetchContext,
+): Promise<FetchResult> {
   const versions = await fetchVersions(spec, context);
   if (!Array.isArray(versions)) {
     return { version: versions };
@@ -425,15 +247,13 @@ export async function fetchVersion(
 
 export async function fetchVersions(
   spec: Fetch,
-  context: Context,
-): Promise<Version | Version[]> {
+  context: FetchContext,
+): Promise<Version[]> {
   switch (spec.type) {
     case "github_release":
       return await fetchGithubRelease(spec, context);
     case "github_tag":
       return await fetchGithubTag(spec, context);
-    case "file":
-      return await fetchFile(spec, context);
     case "html":
       return await fetchHtml(spec, context);
     case "helm":

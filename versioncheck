@@ -4,5 +4,5 @@ exec deno run \
   --allow-net \
   --allow-read \
   --allow-write=cache.db,cache.db-journal \
-  --allow-env=VERSIONCHECK_CONFIG,VERSIONCHECK_PATHS \
+  --allow-env=VERSIONCHECK_CONFIG,VERSIONCHECK_PATHS,GITHUB_TOKEN \
   src/index.ts "$@"
