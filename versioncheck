@@ -3,6 +3,7 @@ exec deno run \
   --no-check \
   --allow-net \
   --allow-read \
+  --allow-run=git \
   --allow-write=cache.db,cache.db-journal \
   --allow-env=VERSIONCHECK_CONFIG,VERSIONCHECK_PATHS,GITHUB_TOKEN \
   src/index.ts "$@"

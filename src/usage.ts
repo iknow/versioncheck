@@ -1,6 +1,6 @@
 import { jmespath, path, YAML, z } from "./deps.ts";
 import { Paths } from "./config.ts";
-import { requireRegexp, Version } from "./version.ts";
+import { makeVersion, requireRegexp, Version } from "./version.ts";
 
 export interface UsageContext {
   tokens?: Record<string, string>;
@@ -104,10 +104,10 @@ export async function getUsage(
       throw new Error(`${spec.parser.query} in ${spec.source} not found`);
     }
     version = requireRegexp(version, spec.parser.regexp);
-    return new Version(version);
+    return makeVersion(version);
   } else if (spec.parser.type === "regexp") {
     const version = requireRegexp(rawText, spec.parser.regexp);
-    return new Version(version);
+    return makeVersion(version);
   } else {
     throw new Error("Unknown parser type");
   }
