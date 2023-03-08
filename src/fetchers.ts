@@ -73,6 +73,7 @@ export type Fetch = z.infer<typeof FetchSchema>;
 export interface FetchContext {
   cache: Cache;
   update: boolean;
+  tokens?: Record<string, string>;
 }
 
 export interface FetchResult {
@@ -88,6 +89,7 @@ async function fetchGithubRelease(
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/releases`,
     context,
+    tokenForOwner(context, spec.owner),
   );
   const json = JSON.parse(body);
   const parsed = GithubReleaseResponseSchema.parse(json);
@@ -108,6 +110,7 @@ async function fetchGithubTag(
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/tags`,
     context,
+    tokenForOwner(context, spec.owner),
   );
   const json = JSON.parse(body);
   const parsed = GithubTagResponseSchema.parse(json);
@@ -117,11 +120,25 @@ async function fetchGithubTag(
     if (version === null) {
       return [];
     }
-    return new Version(version, undefined);
+    return makeVersion(version);
   });
 }
 
-async function fetchUrl(url: string, context: FetchContext): Promise<string> {
+function tokenForOwner(
+  context: FetchContext,
+  owner: string,
+): string | undefined {
+  if (!context.tokens) {
+    return undefined;
+  }
+  return context.tokens[owner] ?? context.tokens.default;
+}
+
+async function fetchUrl(
+  url: string,
+  context: FetchContext,
+  token?: string,
+): Promise<string> {
   let body = undefined as string | undefined;
   if (!context.update) {
     const cached = context.cache.getBody(url);
@@ -131,7 +148,13 @@ async function fetchUrl(url: string, context: FetchContext): Promise<string> {
   }
 
   if (body === undefined) {
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: token
+        ? {
+          Authorization: `Bearer ${token}`,
+        }
+        : {},
+    });
     if (response.status !== 200) {
       throw new Error(
         `Got status ${response.status}: ${await response.text()}`,
