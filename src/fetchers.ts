@@ -1,6 +1,6 @@
-import { dom, semver, YAML, z } from "./deps.ts";
+import { dom, YAML, z } from "./deps.ts";
 import { Cache } from "./cache.ts";
-import { applyRegexp, Version } from "./version.ts";
+import { applyRegexp, makeVersion, Version } from "./version.ts";
 
 const BaseFetchSchema = z.object({
   versionSpec: z.string().optional(),
@@ -35,6 +35,20 @@ const GithubTagResponseSchema = z.array(z.object({
 
 type GithubTagFetch = z.infer<typeof GithubTagFetchSchema>;
 
+const GithubCommitFetchSchema = BaseFetchSchema.extend({
+  type: z.literal("github_commit"),
+  owner: z.string(),
+  repo: z.string(),
+  ref: z.string().optional(),
+  private: z.boolean().default(false),
+});
+
+const GithubCommitResponseSchema = z.object({
+  sha: z.string(),
+});
+
+type GithubCommitFetch = z.infer<typeof GithubCommitFetchSchema>;
+
 const HtmlFetchSchema = BaseFetchSchema.extend({
   type: z.literal("html"),
   url: z.string(),
@@ -64,6 +78,7 @@ type HelmFetch = z.infer<typeof HelmFetchSchema>;
 export const FetchSchema = z.union([
   GithubReleaseFetchSchema,
   GithubTagFetchSchema,
+  GithubCommitFetchSchema,
   HtmlFetchSchema,
   HelmFetchSchema,
 ]);
@@ -73,6 +88,7 @@ export type Fetch = z.infer<typeof FetchSchema>;
 export interface FetchContext {
   cache: Cache;
   update: boolean;
+  tokens?: Record<string, string>;
 }
 
 export interface FetchResult {
@@ -88,6 +104,7 @@ async function fetchGithubRelease(
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/releases`,
     context,
+    tokenForOwner(context, spec.owner),
   );
   const json = JSON.parse(body);
   const parsed = GithubReleaseResponseSchema.parse(json);
@@ -97,7 +114,7 @@ async function fetchGithubRelease(
     if (version === null) {
       return [];
     }
-    return new Version(version, undefined, prerelease);
+    return makeVersion(version, undefined, prerelease);
   });
 }
 
@@ -108,6 +125,7 @@ async function fetchGithubTag(
   const body = await fetchUrl(
     `https://api.github.com/repos/${spec.owner}/${spec.repo}/tags`,
     context,
+    tokenForOwner(context, spec.owner),
   );
   const json = JSON.parse(body);
   const parsed = GithubTagResponseSchema.parse(json);
@@ -117,11 +135,16 @@ async function fetchGithubTag(
     if (version === null) {
       return [];
     }
-    return new Version(version, undefined);
+    return makeVersion(version);
   });
 }
 
-async function fetchUrl(url: string, context: FetchContext): Promise<string> {
+async function fetchGithubCommit(
+  spec: GithubCommitFetch,
+  context: FetchContext,
+): Promise<Version[]> {
+  const url =
+    `https://api.github.com/repos/${spec.owner}/${spec.repo}/commits/${spec.ref}`;
   let body = undefined as string | undefined;
   if (!context.update) {
     const cached = context.cache.getBody(url);
@@ -131,7 +154,70 @@ async function fetchUrl(url: string, context: FetchContext): Promise<string> {
   }
 
   if (body === undefined) {
-    const response = await fetch(url);
+    if (spec.private && !context.tokens) {
+      // if no tokens and the repo is private, fallback to git ls-remote
+      const p = Deno.run({
+        cmd: [
+          "git",
+          "ls-remote",
+          `git@github.com:${spec.owner}/${spec.repo}`,
+          spec.ref ?? "HEAD",
+        ],
+        stdout: "piped",
+      });
+
+      const [{ code }, output] = await Promise.all([p.status(), p.output()]);
+      if (code !== 0) {
+        throw new Error(`Failed to get commit for ${spec.owner}/${spec.repo}`);
+      }
+      const sha = new TextDecoder().decode(output).substring(0, 40);
+      body = JSON.stringify({ sha });
+      context.cache.saveBody(url, body);
+    } else {
+      body = await fetchUrl(
+        `https://api.github.com/repos/${spec.owner}/${spec.repo}/commits/${spec.ref}`,
+        context,
+        tokenForOwner(context, spec.owner),
+      );
+    }
+  }
+
+  const json = JSON.parse(body);
+  const parsed = GithubCommitResponseSchema.parse(json);
+  return [makeVersion(parsed.sha)];
+}
+
+function tokenForOwner(
+  context: FetchContext,
+  owner: string,
+): string | undefined {
+  if (!context.tokens) {
+    return undefined;
+  }
+  return context.tokens[owner] ?? context.tokens.default;
+}
+
+async function fetchUrl(
+  url: string,
+  context: FetchContext,
+  token?: string,
+): Promise<string> {
+  let body = undefined as string | undefined;
+  if (!context.update) {
+    const cached = context.cache.getBody(url);
+    if (cached) {
+      body = cached;
+    }
+  }
+
+  if (body === undefined) {
+    const response = await fetch(url, {
+      headers: token
+        ? {
+          Authorization: `Bearer ${token}`,
+        }
+        : {},
+    });
     if (response.status !== 200) {
       throw new Error(
         `Got status ${response.status}: ${await response.text()}`,
@@ -166,7 +252,7 @@ async function fetchHtml(
     if (version === null) {
       continue;
     }
-    versions.push(new Version(version));
+    versions.push(makeVersion(version));
   }
   return versions;
 }
@@ -189,9 +275,9 @@ async function fetchHelm(
 
   return chartVersions.map((entry) => {
     if (entry.appVersion !== undefined) {
-      return new Version(entry.version, entry.appVersion);
+      return makeVersion(entry.version, entry.appVersion);
     } else {
-      return new Version(entry.version);
+      return makeVersion(entry.version);
     }
   });
 }
@@ -224,18 +310,12 @@ export async function fetchVersion(
   }
 
   validVersions.sort((a, b) => {
-    let result: number = semver.rcompare(a.semantic, b.semantic);
-    if (result === 0) {
-      result = -a.main.localeCompare(b.main);
-    }
-    return result;
+    return -a.compare(b);
   });
 
   const latest = validVersions[0];
   const version = spec.versionSpec
-    ? validVersions.find(({ semantic }) =>
-      semver.satisfies(semantic, spec.versionSpec!)
-    )
+    ? validVersions.find((version) => version.satisfies(spec.versionSpec!))
     : latest;
 
   if (version === undefined) {
@@ -254,6 +334,8 @@ export async function fetchVersions(
       return await fetchGithubRelease(spec, context);
     case "github_tag":
       return await fetchGithubTag(spec, context);
+    case "github_commit":
+      return await fetchGithubCommit(spec, context);
     case "html":
       return await fetchHtml(spec, context);
     case "helm":

@@ -119,7 +119,11 @@ function getFetchContext(options: GlobalOptions): FetchContext {
   if (options.update) {
     console.log("Fetching upstream...");
   }
-  return { cache, update: options.update ?? false };
+  return {
+    cache,
+    update: options.update ?? false,
+    tokens: options.token ? parseTokens(options.token) : undefined,
+  };
 }
 
 function parseTokens(token: string) {
