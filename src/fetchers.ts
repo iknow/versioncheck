@@ -75,12 +75,20 @@ const HelmResponseSchema = z.object({
 
 type HelmFetch = z.infer<typeof HelmFetchSchema>;
 
+const NixpkgsFetchSchema = BaseFetchSchema.extend({
+  type: z.literal("nixpkgs"),
+  channel: z.string(),
+});
+
+type NixpkgsFetch = z.infer<typeof NixpkgsFetchSchema>;
+
 export const FetchSchema = z.union([
   GithubReleaseFetchSchema,
   GithubTagFetchSchema,
   GithubCommitFetchSchema,
   HtmlFetchSchema,
   HelmFetchSchema,
+  NixpkgsFetchSchema,
 ]);
 
 export type Fetch = z.infer<typeof FetchSchema>;
@@ -201,6 +209,8 @@ async function fetchUrl(
   url: string,
   context: FetchContext,
   token?: string,
+  options = {},
+  transformer?: (response: Response) => Promise<string>,
 ): Promise<string> {
   let body = undefined as string | undefined;
   if (!context.update) {
@@ -217,13 +227,18 @@ async function fetchUrl(
           Authorization: `Bearer ${token}`,
         }
         : {},
+      ...options,
     });
-    if (response.status !== 200) {
-      throw new Error(
-        `Got status ${response.status}: ${await response.text()}`,
-      );
+    if (transformer) {
+      body = await transformer(response);
+    } else {
+      if (response.status !== 200) {
+        throw new Error(
+          `Got status ${response.status}: ${await response.text()}`,
+        );
+      }
+      body = await response.text();
     }
-    body = await response.text();
     context.cache.saveBody(url, body);
   }
 
@@ -280,6 +295,48 @@ async function fetchHelm(
       return makeVersion(entry.version);
     }
   });
+}
+
+async function fetchNixpkgs(
+  spec: NixpkgsFetch,
+  context: FetchContext,
+): Promise<Version[]> {
+  const nixexprs = await fetchUrl("https://channels.nixos.org/" + spec.channel, context, undefined, { redirect: "manual" }, async (response) => {
+    if (response.status !== 301) {
+      throw new Error(
+        `Got status ${response.status}: ${await response.text()}`,
+      );
+    }
+    const location = response.headers.get("Location");
+    if (location === null) {
+      throw new Error(`Could not get location for ${response.url}`);
+    }
+    return location + "/nixexprs.tar.xz";
+  });
+  let hash = undefined as string | undefined;
+  if (!context.update) {
+    const cached = context.cache.getBody(nixexprs);
+    if (cached) {
+      hash = cached;
+    }
+  }
+  if (hash === undefined) {
+    const p = Deno.run({
+      cmd: [
+        "nix-prefetch-url",
+        "--unpack",
+        nixexprs,
+      ],
+      stdout: "piped",
+    });
+    const [{ code }, output] = await Promise.all([p.status(), p.output()]);
+    if (code !== 0) {
+      throw new Error(`Failed to fetch hash for ${nixexprs}`);
+    }
+    hash = new TextDecoder().decode(output).trim();
+    context.cache.saveBody(nixexprs, hash);
+  }
+  return [makeVersion(hash)];
 }
 
 function assertNever(): never {
@@ -340,6 +397,8 @@ export async function fetchVersions(
       return await fetchHtml(spec, context);
     case "helm":
       return await fetchHelm(spec, context);
+    case "nixpkgs":
+      return await fetchNixpkgs(spec, context);
     default:
       assertNever();
   }
