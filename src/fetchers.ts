@@ -1,6 +1,6 @@
 import { dom, YAML, z } from "./deps.ts";
 import { Cache } from "./cache.ts";
-import { applyRegexp, makeVersion, Version } from "./version.ts";
+import { applyRegexp, makeVersion, Version, NixpkgsVersion } from "./version.ts";
 
 const BaseFetchSchema = z.object({
   versionSpec: z.string().optional(),
@@ -319,7 +319,7 @@ async function fetchNixpkgs(
     return match[1];
   });
 
-  return [makeVersion(version)];
+  return [new NixpkgsVersion(version)];
 }
 
 function assertNever(): never {
