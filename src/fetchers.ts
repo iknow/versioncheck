@@ -301,7 +301,8 @@ async function fetchNixpkgs(
   spec: NixpkgsFetch,
   context: FetchContext,
 ): Promise<Version[]> {
-  const nixexprs = await fetchUrl("https://channels.nixos.org/" + spec.channel, context, undefined, { redirect: "manual" }, async (response) => {
+  const version = await fetchUrl("https://channels.nixos.org/" + spec.channel, context, undefined, { redirect: "manual" }, async (response) => {
+    const regexp = /releases.nixos.org\/nixpkgs\/([^/]+)/;
     if (response.status !== 301) {
       throw new Error(
         `Got status ${response.status}: ${await response.text()}`,
@@ -311,32 +312,14 @@ async function fetchNixpkgs(
     if (location === null) {
       throw new Error(`Could not get location for ${response.url}`);
     }
-    return location + "/nixexprs.tar.xz";
+    const match = regexp.exec(location);
+    if (match === null) {
+      throw new Error(`Could not parse ${response.url}`);
+    }
+    return match[1];
   });
-  let hash = undefined as string | undefined;
-  if (!context.update) {
-    const cached = context.cache.getBody(nixexprs);
-    if (cached) {
-      hash = cached;
-    }
-  }
-  if (hash === undefined) {
-    const p = Deno.run({
-      cmd: [
-        "nix-prefetch-url",
-        "--unpack",
-        nixexprs,
-      ],
-      stdout: "piped",
-    });
-    const [{ code }, output] = await Promise.all([p.status(), p.output()]);
-    if (code !== 0) {
-      throw new Error(`Failed to fetch hash for ${nixexprs}`);
-    }
-    hash = new TextDecoder().decode(output).trim();
-    context.cache.saveBody(nixexprs, hash);
-  }
-  return [makeVersion(hash)];
+
+  return [makeVersion(version)];
 }
 
 function assertNever(): never {

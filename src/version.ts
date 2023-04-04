@@ -10,16 +10,13 @@ export interface Version {
 }
 
 const COMMIT_REGEX = /^[0-9a-f]{40}$/;
-
-// nix encodes hashes in base32 with an unusual set of characters (without E O U T).
-// https://github.com/NixOS/nix/blob/2ef99cd10489929a755831251c3fad8f3df2faeb/src/libutil/hash.cc#L85
-const NIX_HASH_REGEX = /^[0-9abcdfghijklmnpqrsvwxyz]{52}$/;
+const NIXPKGS_REGEX = /^nixpkgs-[\w\.]+\.[\da-f]+$/;
 
 export function makeVersion(main: string, app?: string, prerelease?: boolean) {
   if (COMMIT_REGEX.test(main)) {
     return new CommitVersion(main);
-  } else if (NIX_HASH_REGEX.test(main)) {
-    return new NixHashVersion(main);
+  } else if (NIXPKGS_REGEX.test(main)) {
+    return new NixpkgsVersion(main);
   } else {
     return new SemanticVersion(main, app, prerelease);
   }
@@ -41,7 +38,7 @@ export class CommitVersion implements Version {
   }
 }
 
-export class NixHashVersion implements Version {
+export class NixpkgsVersion implements Version {
   constructor(public readonly main: string) { }
 
   public get prerelease() {
