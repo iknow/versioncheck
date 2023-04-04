@@ -1,6 +1,6 @@
 import { dom, YAML, z } from "./deps.ts";
 import { Cache } from "./cache.ts";
-import { applyRegexp, makeVersion, Version } from "./version.ts";
+import { applyRegexp, makeVersion, Version, NixpkgsVersion } from "./version.ts";
 
 const BaseFetchSchema = z.object({
   versionSpec: z.string().optional(),
@@ -75,12 +75,20 @@ const HelmResponseSchema = z.object({
 
 type HelmFetch = z.infer<typeof HelmFetchSchema>;
 
+const NixpkgsFetchSchema = BaseFetchSchema.extend({
+  type: z.literal("nixpkgs"),
+  channel: z.string(),
+});
+
+type NixpkgsFetch = z.infer<typeof NixpkgsFetchSchema>;
+
 export const FetchSchema = z.union([
   GithubReleaseFetchSchema,
   GithubTagFetchSchema,
   GithubCommitFetchSchema,
   HtmlFetchSchema,
   HelmFetchSchema,
+  NixpkgsFetchSchema,
 ]);
 
 export type Fetch = z.infer<typeof FetchSchema>;
@@ -201,6 +209,8 @@ async function fetchUrl(
   url: string,
   context: FetchContext,
   token?: string,
+  options = {},
+  transformer?: (response: Response) => Promise<string>,
 ): Promise<string> {
   let body = undefined as string | undefined;
   if (!context.update) {
@@ -217,13 +227,18 @@ async function fetchUrl(
           Authorization: `Bearer ${token}`,
         }
         : {},
+      ...options,
     });
-    if (response.status !== 200) {
-      throw new Error(
-        `Got status ${response.status}: ${await response.text()}`,
-      );
+    if (transformer) {
+      body = await transformer(response);
+    } else {
+      if (response.status !== 200) {
+        throw new Error(
+          `Got status ${response.status}: ${await response.text()}`,
+        );
+      }
+      body = await response.text();
     }
-    body = await response.text();
     context.cache.saveBody(url, body);
   }
 
@@ -280,6 +295,31 @@ async function fetchHelm(
       return makeVersion(entry.version);
     }
   });
+}
+
+async function fetchNixpkgs(
+  spec: NixpkgsFetch,
+  context: FetchContext,
+): Promise<Version[]> {
+  const version = await fetchUrl("https://channels.nixos.org/" + spec.channel, context, undefined, { redirect: "manual" }, async (response) => {
+    const regexp = /releases.nixos.org\/nixpkgs\/([^/]+)/;
+    if (response.status !== 301) {
+      throw new Error(
+        `Got status ${response.status}: ${await response.text()}`,
+      );
+    }
+    const location = response.headers.get("Location");
+    if (location === null) {
+      throw new Error(`Could not get location for ${response.url}`);
+    }
+    const match = regexp.exec(location);
+    if (match === null) {
+      throw new Error(`Could not parse ${response.url}`);
+    }
+    return match[1];
+  });
+
+  return [new NixpkgsVersion(version)];
 }
 
 function assertNever(): never {
@@ -340,6 +380,8 @@ export async function fetchVersions(
       return await fetchHtml(spec, context);
     case "helm":
       return await fetchHelm(spec, context);
+    case "nixpkgs":
+      return await fetchNixpkgs(spec, context);
     default:
       assertNever();
   }

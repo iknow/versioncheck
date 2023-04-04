@@ -10,10 +10,13 @@ export interface Version {
 }
 
 const COMMIT_REGEX = /^[0-9a-f]{40}$/;
+const NIXPKGS_REGEX = /^nixpkgs-[\w\.]+\.[\da-f]+$/;
 
 export function makeVersion(main: string, app?: string, prerelease?: boolean) {
   if (COMMIT_REGEX.test(main)) {
     return new CommitVersion(main);
+  } else if (NIXPKGS_REGEX.test(main)) {
+    return new NixpkgsVersion(main);
   } else {
     return new SemanticVersion(main, app, prerelease);
   }
@@ -21,6 +24,22 @@ export function makeVersion(main: string, app?: string, prerelease?: boolean) {
 
 export class CommitVersion implements Version {
   constructor(public readonly main: string) {}
+
+  public get prerelease() {
+    return false;
+  }
+
+  compare(other: Version): number {
+    return this.main.localeCompare(other.main);
+  }
+
+  satisfies(spec: string): boolean {
+    return this.main === spec;
+  }
+}
+
+export class NixpkgsVersion implements Version {
+  constructor(public readonly main: string) { }
 
   public get prerelease() {
     return false;
