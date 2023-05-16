@@ -7,16 +7,31 @@ export interface Version {
 
   compare(other: Version): number;
   satisfies(spec: string): boolean;
+
+  /**
+   * Checks whether a version can be substituted for another
+   *
+   * Versions from fetchers are typically more detailed than ones from usage.
+   * This function determines if the other version can be substituted with the
+   * current one.
+   *
+   * Unlike compare, this function is not necessarily commutative. A nixpkgs
+   * version can be used to substitute a commit version but not the other way
+   * around.
+   */
+  equivalent(other: Version): boolean;
 }
 
 const COMMIT_REGEX = /^[0-9a-f]{40}$/;
-const NIXPKGS_REGEX = /^nixpkgs-[\w\.]+\.[\da-f]+$/;
+const NIXPKGS_REGEX = /^nixpkgs-[\w\.]+\.([\da-f]+)$/;
 
 export function makeVersion(main: string, app?: string, prerelease?: boolean) {
-  if (COMMIT_REGEX.test(main)) {
+  const match = NIXPKGS_REGEX.exec(main);
+  if (match !== null) {
+    const commit = match[1];
+    return new NixpkgsVersion(main, commit);
+  } else if (COMMIT_REGEX.test(main)) {
     return new CommitVersion(main);
-  } else if (NIXPKGS_REGEX.test(main)) {
-    return new NixpkgsVersion(main);
   } else {
     return new SemanticVersion(main, app, prerelease);
   }
@@ -36,10 +51,17 @@ export class CommitVersion implements Version {
   satisfies(spec: string): boolean {
     return this.main === spec;
   }
+
+  equivalent(other: Version): boolean {
+    return this.main === other.main;
+  }
 }
 
 export class NixpkgsVersion implements Version {
-  constructor(public readonly main: string) { }
+  constructor(
+    public readonly main: string,
+    public readonly commit: string,
+  ) {}
 
   public get prerelease() {
     return false;
@@ -51,6 +73,13 @@ export class NixpkgsVersion implements Version {
 
   satisfies(spec: string): boolean {
     return this.main === spec;
+  }
+
+  equivalent(other: Version): boolean {
+    if (other instanceof CommitVersion) {
+      return other.main.startsWith(this.commit);
+    }
+    return this.main === other.main;
   }
 }
 
@@ -86,6 +115,10 @@ export class SemanticVersion implements Version {
 
   satisfies(spec: string): boolean {
     return semver.satisfies(this.semantic, spec);
+  }
+
+  equivalent(other: Version): boolean {
+    return this.main === other.main;
   }
 }
 

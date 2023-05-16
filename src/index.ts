@@ -54,11 +54,13 @@ async function checkVersion(
   const outdated: Record<string, Version> = {};
   if (upstreamVersion !== null) {
     for (const [key, version] of rest) {
-      if (version.main !== upstreamVersion.version.main) {
+      if (!upstreamVersion.version.equivalent(version)) {
         if (upstreamVersion.versions !== undefined) {
-          const fullVersion = upstreamVersion.versions.find(({ main }) => {
-            return main === version.main;
-          });
+          const fullVersion = upstreamVersion.versions.find(
+            (upstreamVersion) => {
+              return upstreamVersion.equivalent(version);
+            },
+          );
           outdated[key] = fullVersion ?? version;
         } else {
           outdated[key] = version;

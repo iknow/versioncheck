@@ -1,6 +1,6 @@
 import { dom, YAML, z } from "./deps.ts";
 import { Cache } from "./cache.ts";
-import { applyRegexp, makeVersion, Version, NixpkgsVersion } from "./version.ts";
+import { applyRegexp, makeVersion, Version } from "./version.ts";
 
 const BaseFetchSchema = z.object({
   versionSpec: z.string().optional(),
@@ -77,7 +77,6 @@ type HelmFetch = z.infer<typeof HelmFetchSchema>;
 
 const NixpkgsFetchSchema = BaseFetchSchema.extend({
   type: z.literal("nixpkgs"),
-  channel: z.string(),
 });
 
 type NixpkgsFetch = z.infer<typeof NixpkgsFetchSchema>;
@@ -298,28 +297,60 @@ async function fetchHelm(
 }
 
 async function fetchNixpkgs(
-  spec: NixpkgsFetch,
+  _spec: NixpkgsFetch,
   context: FetchContext,
 ): Promise<Version[]> {
-  const version = await fetchUrl("https://channels.nixos.org/" + spec.channel, context, undefined, { redirect: "manual" }, async (response) => {
-    const regexp = /releases.nixos.org\/nixpkgs\/([^/]+)/;
-    if (response.status !== 301) {
-      throw new Error(
-        `Got status ${response.status}: ${await response.text()}`,
-      );
+  const cacheKey = "nix-channel:nixpkgs-unstable";
+  let versions: string[] | undefined = undefined;
+  if (!context.update) {
+    const cached = context.cache.getBody(cacheKey);
+    if (cached) {
+      versions = JSON.parse(cached);
     }
-    const location = response.headers.get("Location");
-    if (location === null) {
-      throw new Error(`Could not get location for ${response.url}`);
-    }
-    const match = regexp.exec(location);
-    if (match === null) {
-      throw new Error(`Could not parse ${response.url}`);
-    }
-    return match[1];
-  });
+  }
 
-  return [new NixpkgsVersion(version)];
+  if (versions === undefined) {
+    await dom.initParser();
+    versions = [];
+
+    let continuationToken: string | null = null;
+    do {
+      const url = new URL("https://nix-releases.s3.amazonaws.com");
+      url.searchParams.set("list-type", "2");
+      url.searchParams.set("prefix", "nixpkgs/nixpkgs-");
+      url.searchParams.set("delimiter", "/");
+      if (continuationToken !== null) {
+        url.searchParams.set("continuation-token", continuationToken);
+      }
+
+      const response = await fetch(url);
+      if (response.status !== 200) {
+        throw new Error(
+          `Got status ${response.status}: ${await response.text()}`,
+        );
+      }
+
+      const rawText = await response.text();
+      const doc = new dom.DOMParser().parseFromString(rawText, "text/html");
+      if (doc === null) {
+        throw new Error(`Could not parse S3 response: ${rawText}`);
+      }
+
+      const keys = doc.querySelectorAll("Key");
+      for (const key of keys) {
+        // strip nixpkgs/ prefix
+        const keyText = key.textContent.substring(8);
+        versions.push(keyText);
+      }
+
+      continuationToken =
+        doc.querySelector("NextContinuationToken")?.textContent ?? null;
+    } while (continuationToken !== null);
+
+    context.cache.saveBody(cacheKey, JSON.stringify(versions));
+  }
+
+  return versions.map((version) => makeVersion(version));
 }
 
 function assertNever(): never {
