@@ -35,6 +35,10 @@ const FileUsageSchema = z.object({
       type: z.literal("regexp"),
       regexp: z.string(),
     }),
+    z.object({
+      type: z.literal("nix-flake"),
+      input: z.string().default("nixpkgs"),
+    }),
   ]),
 });
 
@@ -107,6 +111,10 @@ export async function getUsage(
     return makeVersion(version);
   } else if (spec.parser.type === "regexp") {
     const version = requireRegexp(rawText, spec.parser.regexp);
+    return makeVersion(version);
+  } else if (spec.parser.type === "nix-flake") {
+    const json = JSON.parse(rawText);
+    const version: string = json.nodes[spec.parser.input].locked.rev;
     return makeVersion(version);
   } else {
     throw new Error("Unknown parser type");
