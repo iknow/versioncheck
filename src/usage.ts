@@ -57,7 +57,11 @@ async function getFile(
     if (context.paths) {
       sourcePath = normalizePaths(source, context.paths);
     }
-    return await Deno.readTextFile(sourcePath);
+    try {
+      return await Deno.readTextFile(sourcePath);
+    } catch (_err) {
+      throw new Error(`Failed to read file: ${sourcePath}`);
+    }
   } else if (source.type === "github") {
     if (context.tokens) {
       const url = new URL(
@@ -80,7 +84,12 @@ async function getFile(
       }
       return await response.text();
     } else if (context.paths) {
-      return await Deno.readTextFile(normalizePaths(source, context.paths));
+      const sourcePath = normalizePaths(source, context.paths);
+      try {
+        return await Deno.readTextFile(sourcePath);
+      } catch {
+        throw new Error(`Failed to read file: ${sourcePath}`);
+      }
     } else {
       throw new Error("GitHub sources require --path or --token specified");
     }

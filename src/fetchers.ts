@@ -367,7 +367,7 @@ export async function fetchVersion(
   }
 
   if (versions.length === 0) {
-    throw new Error(`No versions found`);
+    throw new Error(`No versions found for ${stringifySpec(spec)}`);
   }
 
   const validVersions = spec.prerelease
@@ -377,7 +377,7 @@ export async function fetchVersion(
     });
 
   if (validVersions.length === 0) {
-    throw new Error("No valid versions");
+    throw new Error(`No valid versions for ${stringifySpec(spec)}`);
   }
 
   validVersions.sort((a, b) => {
@@ -390,7 +390,7 @@ export async function fetchVersion(
     : latest;
 
   if (version === undefined) {
-    throw new Error("No compatible version");
+    throw new Error(`No compatible version ${stringifySpec(spec)}`);
   }
 
   return { version, latest, versions: validVersions };
@@ -416,4 +416,29 @@ export async function fetchVersions(
     default:
       assertNever();
   }
+}
+
+function getSpecName(spec: Fetch): string {
+  switch (spec.type) {
+    case "github_release":
+    case "github_tag":
+    case "github_commit":
+      return `gh:${spec.owner}/${spec.repo}`;
+    case "html":
+      return `${spec.url} ${spec.selector}`;
+    case "helm":
+      return `helm:${spec.chart}/${spec.repo}`;
+    case "nixpkgs":
+      return "nixpkgs";
+    default:
+      assertNever();
+  }
+}
+
+function stringifySpec(spec: Fetch): string {
+  let text = getSpecName(spec);
+  if (spec.versionSpec) {
+    text += ` (${spec.versionSpec})`;
+  }
+  return text;
 }
