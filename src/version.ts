@@ -23,7 +23,7 @@ export interface Version {
 }
 
 const COMMIT_REGEX = /^[0-9a-f]{40}$/;
-const NIXPKGS_REGEX = /^nixpkgs-[\w\.]+\.([\da-f]+)$/;
+const NIXPKGS_REGEX = /^(?:nixpkgs|nixos)-[\w\.]+\.([\da-f]+)$/;
 
 export function makeVersion(main: string, app?: string, prerelease?: boolean) {
   const match = NIXPKGS_REGEX.exec(main);
